@@ -7,159 +7,606 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserRole { OWNER MANAGER SALES_ASSOCIATE TECHNICIAN INVENTORY_MANAGER ADMIN }
-enum InventoryType { MERCHANDISE LIVESTOCK CORAL PLANT INVERTEBRATE }
-enum AppointmentStatus { SCHEDULED COMPLETED CANCELLED RESCHEDULED }
-enum TankType { FRESHWATER SALTWATER REEF PLANTED AFRICAN_CICHLID POND OTHER }
+enum UserStatus { INVITED ACTIVE SUSPENDED DISABLED }
+enum ProductStatus { ACTIVE DISCONTINUED ARCHIVED }
+enum InventoryMovementType { RECEIPT SALE RETURN TRANSFER DAMAGE EXPIRATION THEFT CORRECTION SERVICE_USE MORTALITY }
+enum LivestockStatus { QUARANTINE NOT_FOR_SALE AVAILABLE RESERVED SOLD DECEASED RETURNED }
+enum TankWaterType { FRESHWATER SALTWATER BRACKISH POND }
+enum PurchaseOrderStatus { DRAFT SUBMITTED PARTIALLY_RECEIVED RECEIVED CLOSED CANCELLED }
+enum SaleStatus { OPEN COMPLETED VOIDED REFUNDED PARTIALLY_REFUNDED }
+enum PaymentMethod { CASH CARD GIFT_CARD STORE_CREDIT EXTERNAL OTHER }
+enum AppointmentStatus { UNSCHEDULED SCHEDULED CONFIRMED EN_ROUTE IN_PROGRESS COMPLETED FOLLOW_UP_REQUIRED CANCELLED CUSTOMER_UNAVAILABLE RESCHEDULE_REQUIRED }
+enum InvoiceStatus { DRAFT SENT VIEWED PARTIALLY_PAID PAID OVERDUE WRITTEN_OFF VOIDED }
+enum EstimateStatus { DRAFT SENT VIEWED APPROVED REJECTED EXPIRED CONVERTED }
+enum AquariumType { FRESHWATER SALTWATER REEF PLANTED AFRICAN_CICHLID POND COMMERCIAL OTHER }
+enum ServiceCadenceStatus { UPCOMING DUE_SOON DUE OVERDUE AT_RISK INACTIVE }
+enum AuditAction { CREATE UPDATE DELETE LOGIN LOGOUT EXPORT DISCOUNT REFUND VOID PRICE_OVERRIDE INVENTORY_ADJUSTMENT PERMISSION_CHANGE }
 
-model Store {
-  id           String        @id @default(cuid())
-  name         String
-  timezone     String        @default("America/Los_Angeles")
-  users        User[]
-  customers    Customer[]
-  products     Product[]
-  vendors      Vendor[]
-  sales        Sale[]
-  appointments ServiceAppointment[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+model Company {
+  id          String     @id @default(cuid())
+  name        String
+  legalName   String?
+  locations   Location[]
+  users       User[]
+  roles       Role[]
+  customers   Customer[]
+  suppliers   Supplier[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Location {
+  id             String                @id @default(cuid())
+  companyId      String
+  company        Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name           String
+  timezone       String                @default("America/Los_Angeles")
+  address        Json?
+  taxSettings    Json?
+  users          UserLocation[]
+  products       ProductLocation[]
+  storeTanks     StoreTank[]
+  purchaseOrders PurchaseOrder[]
+  sales          Sale[]
+  appointments   ServiceAppointment[]
+  invoices       Invoice[]
+  estimates      Estimate[]
+  auditEvents    AuditEvent[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  @@unique([companyId, name])
 }
 
 model User {
-  id        String   @id @default(cuid())
-  storeId   String
-  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  name      String
-  email     String
-  role      UserRole
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@unique([storeId, email])
+  id             String         @id @default(cuid())
+  companyId      String
+  company        Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  roleId         String
+  role           Role           @relation(fields: [roleId], references: [id])
+  name           String
+  email          String
+  passwordHash   String?
+  status         UserStatus     @default(INVITED)
+  mfaEnabled     Boolean        @default(false)
+  locations      UserLocation[]
+  inventoryMoves InventoryMovement[]
+  mortality      MortalityRecord[]
+  serviceJobs    ServiceJob[]   @relation("TechnicianJobs")
+  auditEvents    AuditEvent[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  @@unique([companyId, email])
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  companyId   String
+  company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String
+  isSystem    Boolean          @default(false)
+  users       User[]
+  permissions RolePermission[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  @@unique([companyId, name])
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  description String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([roleId, permissionId])
+}
+
+model UserLocation {
+  userId     String
+  locationId String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  @@id([userId, locationId])
 }
 
 model Customer {
-  id                     String   @id @default(cuid())
-  storeId                String
-  store                  Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  firstName              String
-  lastName               String
-  phone                   String?
-  email                   String?
-  preferredContactMethod String?
-  notes                   String?
-  aquariums               Aquarium[]
-  sales                   Sale[]
-  appointments            ServiceAppointment[]
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  @@index([storeId, lastName])
+  id                   String             @id @default(cuid())
+  companyId            String
+  company              Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  firstName            String
+  lastName             String
+  phone                 String?
+  email                 String?
+  billingAddress        Json?
+  communicationPrefs    Json?
+  marketingConsentAt   DateTime?
+  marketingOptOutAt    DateTime?
+  notes                 String?
+  storeCreditBalance   Decimal            @default(0) @db.Decimal(12,2)
+  loyaltyBalance       Int                @default(0)
+  tags                  CustomerTag[]
+  aquariums             CustomerAquarium[]
+  sales                 Sale[]
+  estimates             Estimate[]
+  invoices              Invoice[]
+  appointments          ServiceAppointment[]
+  communications       CustomerCommunication[]
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  @@index([companyId, lastName])
+  @@index([companyId, phone])
+  @@index([companyId, email])
 }
 
-model Aquarium {
-  id              String   @id @default(cuid())
-  customerId      String
-  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  name            String
-  tankType        TankType
-  volumeGallons   Decimal? @db.Decimal(10, 2)
-  normalServiceDays Int?
-  lastServicedAt  DateTime?
-  notes           String?
-  appointments    ServiceAppointment[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+model CustomerTag {
+  id         String     @id @default(cuid())
+  customerId String
+  customer   Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  value      String
+  @@unique([customerId, value])
 }
 
-model Vendor {
-  id        String    @id @default(cuid())
-  storeId   String
-  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  name      String
-  email     String?
-  phone     String?
-  products  Product[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  @@unique([storeId, name])
+model CustomerAquarium {
+  id                    String                @id @default(cuid())
+  customerId            String
+  customer              Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name                  String
+  type                  AquariumType
+  serviceAddress        Json?
+  volumeGallons         Decimal?              @db.Decimal(10,2)
+  dimensions            Json?
+  installationDate      DateTime?
+  photoUrl              String?
+  status                String                @default("active")
+  contractualIntervalDays Int?
+  observedIntervalDays  Decimal?              @db.Decimal(8,2)
+  cadenceStatus         ServiceCadenceStatus  @default(UPCOMING)
+  lastServiceAt         DateTime?
+  nextServiceAt         DateTime?
+  emergencyInfo         Json?
+  equipment             CustomerEquipment[]
+  livestock             CustomerLivestock[]
+  testResults           CustomerTankTest[]
+  appointments          ServiceAppointment[]
+  serviceLogs           ServiceLog[]
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+}
+
+model CustomerEquipment {
+  id               String            @id @default(cuid())
+  aquariumId       String
+  aquarium         CustomerAquarium  @relation(fields: [aquariumId], references: [id], onDelete: Cascade)
+  manufacturer     String?
+  model            String
+  serialNumber     String?
+  installationDate DateTime?
+  warrantyExpiresAt DateTime?
+  replacementDate  DateTime?
+  maintenanceSchedule Json?
+}
+
+model CustomerLivestock {
+  id             String            @id @default(cuid())
+  aquariumId     String
+  aquarium       CustomerAquarium  @relation(fields: [aquariumId], references: [id], onDelete: Cascade)
+  speciesId      String?
+  species        LivestockSpecies? @relation(fields: [speciesId], references: [id])
+  saleItemId     String?           @unique
+  saleItem       SaleItem?         @relation(fields: [saleItemId], references: [id])
+  name           String
+  addedAt        DateTime          @default(now())
+  lostAt         DateTime?
+  notes          String?
+}
+
+model CustomerTankTest {
+  id          String            @id @default(cuid())
+  aquariumId  String
+  aquarium    CustomerAquarium  @relation(fields: [aquariumId], references: [id], onDelete: Cascade)
+  values      Json
+  testedAt    DateTime          @default(now())
+  serviceLogId String?
+}
+
+model CustomerCommunication {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel    String
+  direction  String
+  subject    String?
+  body       String?
+  occurredAt DateTime @default(now())
+}
+
+model Supplier {
+  id            String          @id @default(cuid())
+  companyId     String
+  company       Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name          String
+  contact       Json?
+  accountNumber String?
+  paymentTerms  String?
+  leadTimeDays  Int?
+  minimumOrder  Decimal?        @db.Decimal(12,2)
+  shippingMethods Json?
+  products      Product[]
+  purchaseOrders PurchaseOrder[]
+  shipments     Shipment[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  @@unique([companyId, name])
 }
 
 model Product {
-  id             String        @id @default(cuid())
-  storeId        String
-  store          Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  vendorId       String?
-  vendor         Vendor?       @relation(fields: [vendorId], references: [id])
-  type           InventoryType
+  id          String           @id @default(cuid())
+  supplierId  String?
+  supplier    Supplier?        @relation(fields: [supplierId], references: [id])
+  name        String
+  brand       String?
+  category    String
+  taxCategory String?
+  status      ProductStatus    @default(ACTIVE)
+  variants    ProductVariant[]
+  locations   ProductLocation[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model ProductVariant {
+  id              String              @id @default(cuid())
+  productId       String
+  product         Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku             String              @unique
+  barcode         String?             @unique
+  attributes      Json?
+  cost            Decimal             @db.Decimal(12,2)
+  retailPrice     Decimal             @db.Decimal(12,2)
+  reorderPoint    Decimal?            @db.Decimal(12,2)
+  reorderQuantity Decimal?            @db.Decimal(12,2)
+  lotTracking     Boolean             @default(false)
+  serialTracking  Boolean             @default(false)
+  locations       ProductLocation[]
+  movements       InventoryMovement[]
+  saleItems       SaleItem[]
+  purchaseItems   PurchaseOrderItem[]
+}
+
+model ProductLocation {
+  id             String         @id @default(cuid())
+  productId      String
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId      String
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId     String
+  location       Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  quantityOnHand Decimal        @default(0) @db.Decimal(12,2)
+  reservedQty    Decimal        @default(0) @db.Decimal(12,2)
+  binLocation    String?
+  @@unique([variantId, locationId])
+}
+
+model LivestockSpecies {
+  id              String               @id @default(cuid())
+  commonName      String
+  scientificName String?
+  category        String
+  careProfile     Json?
+  batchItems      LivestockBatchItem[]
+  customerStock   CustomerLivestock[]
+  @@index([commonName])
+  @@index([scientificName])
+}
+
+model StoreTank {
+  id             String               @id @default(cuid())
+  locationId     String
+  location       Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)
   name           String
-  sku            String
-  barcode        String?
-  category       String
-  cost           Decimal       @db.Decimal(12, 2)
-  retailPrice    Decimal       @db.Decimal(12, 2)
-  quantityOnHand Decimal       @db.Decimal(12, 2)
-  reorderPoint   Decimal?      @db.Decimal(12, 2)
-  reorderQuantity Decimal?     @db.Decimal(12, 2)
-  receivedAt     DateTime?
-  soldAt         DateTime?
-  mortalityAt    DateTime?
-  saleItems      SaleItem[]
-  movements      InventoryMovement[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  @@unique([storeId, sku])
-  @@index([storeId, type, category])
+  physicalArea   String?
+  volumeGallons  Decimal?             @db.Decimal(10,2)
+  waterType      TankWaterType
+  systemType     String?
+  sharedSystemKey String?
+  treatmentStatus String?
+  active         Boolean              @default(true)
+  livestock      LivestockBatchItem[]
+  tests          TankTestResult[]
+  treatments     TankTreatment[]
+  mortality      MortalityRecord[]
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  @@unique([locationId, name])
+}
+
+model Shipment {
+  id             String               @id @default(cuid())
+  supplierId     String
+  supplier       Supplier             @relation(fields: [supplierId], references: [id])
+  purchaseOrderId String?
+  purchaseOrder  PurchaseOrder?       @relation(fields: [purchaseOrderId], references: [id])
+  reference      String?
+  arrivalDate    DateTime?
+  freightCost    Decimal              @default(0) @db.Decimal(12,2)
+  packingCost    Decimal              @default(0) @db.Decimal(12,2)
+  attachments    Json?
+  livestockItems LivestockBatchItem[]
+  createdAt      DateTime             @default(now())
+}
+
+model LivestockBatchItem {
+  id                String            @id @default(cuid())
+  shipmentId        String
+  shipment          Shipment          @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  speciesId         String
+  species           LivestockSpecies  @relation(fields: [speciesId], references: [id])
+  currentTankId     String?
+  currentTank       StoreTank?        @relation(fields: [currentTankId], references: [id])
+  variantMorph      String?
+  size              String?
+  quantityOrdered   Int
+  quantityShipped   Int
+  quantityReceived  Int
+  quantityDoa       Int               @default(0)
+  quantityAvailable Int               @default(0)
+  quantitySold      Int               @default(0)
+  unitPurchaseCost  Decimal           @db.Decimal(12,2)
+  allocatedFreight  Decimal           @default(0) @db.Decimal(12,2)
+  landedUnitCost    Decimal           @db.Decimal(12,2)
+  retailPrice       Decimal           @db.Decimal(12,2)
+  status            LivestockStatus   @default(QUARANTINE)
+  healthStatus      String?
+  photoUrl          String?
+  saleItems         SaleItem[]
+  mortality         MortalityRecord[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}
+
+model MortalityRecord {
+  id               String             @id @default(cuid())
+  livestockBatchId String
+  livestockBatch   LivestockBatchItem @relation(fields: [livestockBatchId], references: [id])
+  tankId           String?
+  tank             StoreTank?         @relation(fields: [tankId], references: [id])
+  recordedById     String
+  recordedBy       User               @relation(fields: [recordedById], references: [id])
+  quantity         Int
+  cause            String
+  occurredAt       DateTime
+  photoUrl         String?
+  notes            String?
+  supplierCreditEligible Boolean      @default(false)
+  supplierCreditAmount Decimal?       @db.Decimal(12,2)
+}
+
+model TankTestResult {
+  id        String    @id @default(cuid())
+  tankId    String
+  tank      StoreTank @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  values    Json
+  outsideRange Boolean @default(false)
+  testedAt  DateTime  @default(now())
+}
+
+model TankTreatment {
+  id          String    @id @default(cuid())
+  tankId      String
+  tank        StoreTank @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  medication  String
+  dosage      String
+  startDate   DateTime
+  endDate     DateTime?
+  observationUntil DateTime?
+  notes       String?
+}
+
+model PurchaseOrder {
+  id            String              @id @default(cuid())
+  locationId    String
+  location      Location            @relation(fields: [locationId], references: [id])
+  supplierId    String
+  supplier      Supplier            @relation(fields: [supplierId], references: [id])
+  status        PurchaseOrderStatus @default(DRAFT)
+  orderNumber   String
+  submittedAt   DateTime?
+  expectedAt    DateTime?
+  items         PurchaseOrderItem[]
+  shipments     Shipment[]
+  attachments   Json?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  @@unique([locationId, orderNumber])
+}
+
+model PurchaseOrderItem {
+  id              String          @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productVariantId String?
+  productVariant  ProductVariant? @relation(fields: [productVariantId], references: [id])
+  description     String
+  quantityOrdered Decimal         @db.Decimal(12,2)
+  quantityReceived Decimal        @default(0) @db.Decimal(12,2)
+  unitCost        Decimal         @db.Decimal(12,2)
 }
 
 model InventoryMovement {
-  id        String   @id @default(cuid())
-  productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  quantity  Decimal  @db.Decimal(12, 2)
-  reason    String
-  createdAt DateTime @default(now())
-  @@index([productId, createdAt])
+  id             String                @id @default(cuid())
+  variantId      String
+  variant        ProductVariant        @relation(fields: [variantId], references: [id])
+  performedById  String
+  performedBy    User                  @relation(fields: [performedById], references: [id])
+  type           InventoryMovementType
+  quantity       Decimal               @db.Decimal(12,2)
+  reason         String
+  sourceLocationId String?
+  targetLocationId String?
+  referenceType  String?
+  referenceId    String?
+  lotNumber      String?
+  serialNumber   String?
+  occurredAt     DateTime              @default(now())
+  @@index([variantId, occurredAt])
 }
 
 model Sale {
-  id         String    @id @default(cuid())
-  storeId    String
-  store      Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id])
-  subtotal   Decimal   @db.Decimal(12, 2)
-  tax        Decimal   @db.Decimal(12, 2)
-  total      Decimal   @db.Decimal(12, 2)
-  items      SaleItem[]
-  soldAt     DateTime  @default(now())
-  @@index([storeId, soldAt])
+  id          String       @id @default(cuid())
+  locationId  String
+  location    Location     @relation(fields: [locationId], references: [id])
+  customerId  String?
+  customer    Customer?    @relation(fields: [customerId], references: [id])
+  status      SaleStatus   @default(OPEN)
+  subtotal    Decimal      @db.Decimal(12,2)
+  discount    Decimal      @default(0) @db.Decimal(12,2)
+  tax         Decimal      @default(0) @db.Decimal(12,2)
+  total       Decimal      @db.Decimal(12,2)
+  items       SaleItem[]
+  payments    Payment[]
+  completedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  @@index([locationId, completedAt])
 }
 
 model SaleItem {
-  id        String  @id @default(cuid())
-  saleId    String
-  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-  quantity  Decimal @db.Decimal(12, 2)
-  unitPrice Decimal @db.Decimal(12, 2)
-  unitCost  Decimal @db.Decimal(12, 2)
+  id               String              @id @default(cuid())
+  saleId           String
+  sale             Sale                @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productVariantId String?
+  productVariant   ProductVariant?     @relation(fields: [productVariantId], references: [id])
+  livestockBatchId String?
+  livestockBatch   LivestockBatchItem? @relation(fields: [livestockBatchId], references: [id])
+  customerLivestock CustomerLivestock?
+  description      String
+  quantity         Decimal             @db.Decimal(12,2)
+  unitPrice        Decimal             @db.Decimal(12,2)
+  unitCost         Decimal             @db.Decimal(12,2)
+  discount         Decimal             @default(0) @db.Decimal(12,2)
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  saleId    String?
+  sale      Sale?         @relation(fields: [saleId], references: [id])
+  invoiceId String?
+  invoice   Invoice?      @relation(fields: [invoiceId], references: [id])
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(12,2)
+  externalReference String?
+  paidAt    DateTime      @default(now())
+}
+
+model Estimate {
+  id          String         @id @default(cuid())
+  locationId  String
+  location    Location       @relation(fields: [locationId], references: [id])
+  customerId  String
+  customer    Customer       @relation(fields: [customerId], references: [id])
+  status      EstimateStatus @default(DRAFT)
+  lines       Json
+  subtotal    Decimal        @db.Decimal(12,2)
+  tax         Decimal        @default(0) @db.Decimal(12,2)
+  total       Decimal        @db.Decimal(12,2)
+  approvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  locationId  String
+  location    Location      @relation(fields: [locationId], references: [id])
+  customerId  String
+  customer    Customer      @relation(fields: [customerId], references: [id])
+  serviceJobId String?      @unique
+  serviceJob  ServiceJob?   @relation(fields: [serviceJobId], references: [id])
+  status      InvoiceStatus @default(DRAFT)
+  lines       Json
+  subtotal    Decimal       @db.Decimal(12,2)
+  tax         Decimal       @default(0) @db.Decimal(12,2)
+  total       Decimal       @db.Decimal(12,2)
+  dueAt       DateTime?
+  payments    Payment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 }
 
 model ServiceAppointment {
-  id          String            @id @default(cuid())
-  storeId     String
-  store       Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  customerId  String
-  customer    Customer          @relation(fields: [customerId], references: [id])
-  aquariumId  String?
-  aquarium    Aquarium?         @relation(fields: [aquariumId], references: [id])
-  technicianId String?
-  status      AppointmentStatus @default(SCHEDULED)
-  scheduledAt DateTime
-  completedAt DateTime?
-  notes       String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  @@index([storeId, scheduledAt, status])
+  id             String             @id @default(cuid())
+  locationId     String
+  location       Location           @relation(fields: [locationId], references: [id])
+  customerId     String
+  customer       Customer           @relation(fields: [customerId], references: [id])
+  aquariumId     String
+  aquarium       CustomerAquarium   @relation(fields: [aquariumId], references: [id])
+  status         AppointmentStatus  @default(SCHEDULED)
+  scheduledStart DateTime
+  scheduledEnd   DateTime?
+  recurrenceRule String?
+  zone           String?
+  notes          String?
+  serviceJob     ServiceJob?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  @@index([locationId, scheduledStart, status])
+}
+
+model ServiceJob {
+  id             String             @id @default(cuid())
+  appointmentId  String             @unique
+  appointment    ServiceAppointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  technicianId   String
+  technician     User               @relation("TechnicianJobs", fields: [technicianId], references: [id])
+  startedAt      DateTime?
+  pausedSeconds  Int                @default(0)
+  completedAt    DateTime?
+  checklist      Json?
+  productsUsed   Json?
+  observations   String?
+  recommendations String?
+  signatureUrl   String?
+  syncVersion    Int                @default(1)
+  serviceLog     ServiceLog?
+  invoice        Invoice?
+}
+
+model ServiceLog {
+  id            String            @id @default(cuid())
+  serviceJobId  String            @unique
+  serviceJob    ServiceJob        @relation(fields: [serviceJobId], references: [id])
+  aquariumId    String
+  aquarium      CustomerAquarium  @relation(fields: [aquariumId], references: [id])
+  arrivalTime   DateTime
+  departureTime DateTime
+  waterTests    Json?
+  checklist     Json?
+  productsUsed  Json?
+  photos        Json?
+  observations  String?
+  recommendations String?
+  approvedAt    DateTime?
+  deliveredAt   DateTime?
+  createdAt     DateTime          @default(now())
+}
+
+model AuditEvent {
+  id          String      @id @default(cuid())
+  locationId  String?
+  location    Location?   @relation(fields: [locationId], references: [id])
+  actorId     String?
+  actor       User?       @relation(fields: [actorId], references: [id])
+  action      AuditAction
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime    @default(now())
+  @@index([entityType, entityId, createdAt])
 }
